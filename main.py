@@ -16,7 +16,6 @@ from src.tts import play_wav
 def run_once(
     pdf_path: str | Path,
     question_audio_path: str | Path | None,
-    voice_path: str | Path,
     output_dir: str | Path,
     segment_characters: int = 140,
     record_seconds: float | None = None,
@@ -32,7 +31,6 @@ def run_once(
     risking skipped text.
     """
     pdf_path = Path(pdf_path)
-    voice_path = Path(voice_path)
     output_dir = Path(output_dir)
     if (question_audio_path is None) == (record_seconds is None):
         raise ValueError("Provide either question_audio_path or record_seconds.")
@@ -69,7 +67,7 @@ def run_once(
     build_tree(pdf_path, doc_id)
 
     first_text, first_audio = synthesize_narration_segment(
-        state, voice_path, output_dir / "narration_before.wav", segment_characters
+        state, output_dir / "narration_before.wav", segment_characters
     )
     if interrupt_on_speech:
         with monitor_microphone(model_path) as microphone:
@@ -105,14 +103,13 @@ def run_once(
             "doc_id": doc_id,
             "file_path": pdf_path,
             "audio_path": question_audio_path,
-            "voice_path": voice_path,
             "answer_audio_path": output_dir / "answer.wav",
         }
     )
     state = result["narration_state"]
     if not state.is_complete:
         next_text, next_audio = synthesize_narration_segment(
-            state, voice_path, output_dir / "narration_after.wav", segment_characters
+            state, output_dir / "narration_after.wav", segment_characters
         )
         play_wav(next_audio)
         result["narration_state"] = advance_narration(state, len(next_text))
@@ -137,7 +134,6 @@ def main() -> None:
     question_source.add_argument(
         "--record-seconds", type=float, help="Question recording length in microphone modes"
     )
-    parser.add_argument("--voice", type=Path, required=True, help="Piper .onnx voice model")
     parser.add_argument(
         "--output-dir", type=Path, default=Path("cache/tts"), help="Generated WAV directory"
     )
@@ -191,7 +187,7 @@ def main() -> None:
 
     if args.continuous:
         result = run_continuous_session(
-            args.pdf, args.voice, args.vad_model, args.output_dir,
+            args.pdf, args.vad_model, args.output_dir,
             args.record_seconds, args.segment_characters, args.max_segments,
         )
         state = result.narration_state
@@ -206,7 +202,6 @@ def main() -> None:
     result = run_once(
         args.pdf,
         args.question_audio,
-        args.voice,
         args.output_dir,
         args.segment_characters,
         args.record_seconds,

@@ -42,3 +42,24 @@ def test_no_source_skips_answer_model(monkeypatch: pytest.MonkeyPatch) -> None:
     assert retriever.generate_answer("Question?", "", ()) == (
         "The document does not contain relevant information to answer this question."
     )
+    assert list(retriever.stream_answer("Question?", "", ())) == [
+        "The document does not contain relevant information to answer this question."
+    ]
+
+
+def test_streamed_answer_uses_same_grounded_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_chatgroq(**settings):
+        assert settings["model"] == retriever.ANSWER_MODEL
+
+        def respond(prompt_value):
+            system, human = prompt_value.to_messages()
+            assert "Answer only from the supplied source text" in str(system.content)
+            assert "[Page 1]\nA Portkey transports people." in str(human.content)
+            return AIMessage(content="A Portkey transports people.")
+
+        return RunnableLambda(respond)
+
+    monkeypatch.setattr(retriever, "ChatGroq", fake_chatgroq)
+    assert "".join(retriever.stream_answer(
+        "What is a Portkey?", "[Page 1]\nA Portkey transports people.", (1,)
+    )) == "A Portkey transports people."

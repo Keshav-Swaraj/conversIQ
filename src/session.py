@@ -10,7 +10,7 @@ from src.extraction import extract_pdf, generate_doc_id
 from src.graph import get_interrupt_graph
 from src.indexer import build_tree
 from src.narrator import NarrationState, advance_narration, start_narration, synthesize_narration_segment
-from src.tts import load_voice
+from src.tts import create_tts_provider
 
 
 @dataclass(frozen=True)
@@ -25,7 +25,6 @@ class SessionResult:
 
 def run_continuous_session(
     pdf_path: str | Path,
-    voice_path: str | Path,
     vad_model_path: str | Path,
     output_dir: str | Path,
     record_seconds: float = 5.0,
@@ -59,7 +58,6 @@ def run_continuous_session(
             on_update(message)
 
     pdf_path = Path(pdf_path)
-    voice_path = Path(voice_path)
     vad_model_path = Path(vad_model_path)
     output_dir = Path(output_dir)
     if not vad_model_path.is_file():
@@ -78,73 +76,75 @@ def run_continuous_session(
         update("Session stopped before narration.")
         return SessionResult(narration, 0, 0, None)
     workflow = get_interrupt_graph()
-    update("Loading Piper voice...")
-    loaded_voice = load_voice(voice_path)
+    update("Preparing speech provider...")
+    tts_provider = create_tts_provider()
     attempts = 0
     interruptions = 0
     last_answer: str | None = None
     interrupted_segment: tuple[str, Path] | None = None
 
-    while (
-        not stopping()
-        and not narration.is_complete
-        and (max_segments is None or attempts < max_segments)
-    ):
-        update(f"Narrating page {narration.page_number}...")
-        if interrupted_segment is None:
-            text, wav_path = synthesize_narration_segment(
-                narration, voice_path, output_dir / "narration.wav", segment_characters,
-                loaded_voice=loaded_voice,
-            )
-        else:
-            text, wav_path = interrupted_segment
-            interrupted_segment = None
-        if stopping():
-            break
-        attempts += 1
-        with monitor_microphone(vad_model_path, input_device) as microphone:
-            completed = play_wav_interruptible(
-                wav_path, lambda: stopping() or microphone.speech_detected()
-            )
+    try:
+        while (
+            not stopping()
+            and not narration.is_complete
+            and (max_segments is None or attempts < max_segments)
+        ):
+            update(f"Narrating page {narration.page_number}...")
+            if interrupted_segment is None:
+                text, wav_path = synthesize_narration_segment(
+                    narration, output_dir / "narration.wav", segment_characters,
+                    provider=tts_provider,
+                )
+            else:
+                text, wav_path = interrupted_segment
+                interrupted_segment = None
             if stopping():
                 break
-            if not completed:
-                update("Speech detected; recording your question...")
-            question_audio = (
-                None
-                if completed
-                else microphone.capture_question(output_dir / "question.wav", record_seconds)
+            attempts += 1
+            with monitor_microphone(vad_model_path, input_device) as microphone:
+                completed = play_wav_interruptible(
+                    wav_path, lambda: stopping() or microphone.speech_detected()
+                )
+                if stopping():
+                    break
+                if not completed:
+                    update("Speech detected; recording your question...")
+                question_audio = (
+                    None
+                    if completed
+                    else microphone.capture_question(output_dir / "question.wav", record_seconds)
+                )
+
+            if stopping():
+                break
+
+            if completed:
+                narration = advance_narration(narration, len(text))
+                continue
+
+            interruptions += 1
+            interrupted_segment = (text, wav_path)
+            result = workflow.invoke(
+                {
+                    "narration_state": narration,
+                    "doc_id": doc_id,
+                    "file_path": pdf_path,
+                    "audio_path": question_audio,
+                    "tts_provider": tts_provider,
+                    "answer_audio_path": output_dir / "answer.wav",
+                }
             )
-
-        if stopping():
-            break
-
-        if completed:
-            narration = advance_narration(narration, len(text))
-            continue
-
-        interruptions += 1
-        interrupted_segment = (text, wav_path)
-        result = workflow.invoke(
-            {
-                "narration_state": narration,
-                "doc_id": doc_id,
-                "file_path": pdf_path,
-                "audio_path": question_audio,
-                "voice_path": voice_path,
-                "loaded_voice": loaded_voice,
-                "answer_audio_path": output_dir / "answer.wav",
-            }
-        )
-        narration = result["narration_state"]
-        last_answer = result.get("answer")
-        if result.get("query"):
-            update(f"Question: {result['query']}")
-        if last_answer:
-            pages = list(result.get("relevant_pages", ()))
-            update(f"Answer (pages {pages}): {last_answer}")
-        elif result.get("error"):
-            update(f"Question status: {result['error']}")
+            narration = result["narration_state"]
+            last_answer = result.get("answer")
+            if result.get("query"):
+                update(f"Question: {result['query']}")
+            if last_answer:
+                pages = list(result.get("relevant_pages", ()))
+                update(f"Answer (pages {pages}): {last_answer}")
+            elif result.get("error"):
+                update(f"Question status: {result['error']}")
+    finally:
+        tts_provider.close()
 
     update("Narration complete." if narration.is_complete else "Session stopped.")
     return SessionResult(narration, attempts, interruptions, last_answer)

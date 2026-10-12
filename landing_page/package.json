@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
+    "test:interrupt": "node --experimental-strip-types --test scripts/activeInterruption.test.mjs",
+    "test:interrupt-browser": "node scripts/verify-active-interruption.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {

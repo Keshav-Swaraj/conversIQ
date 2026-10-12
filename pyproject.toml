@@ -4,21 +4,42 @@ version = "0.1.0"
 description = "Voice-first document RAG system."
 requires-python = ">=3.11,<3.12"
 dependencies = [
+    "cartesia>=4.2.0",
     "groq>=0.37.1",
+    "google-genai>=2.29.0",
     "ipykernel",
     "jupyter",
     "langchain-groq>=1.1.3",
     "langgraph>=1.2.11",
     "onnxruntime>=1.30.0",
     "pageindex>=0.2.12",
-    "piper-tts>=1.8.0",
     "pymupdf",
     "python-dotenv",
     "sounddevice>=0.5.6",
+    "websockets>=16.1,<17",
+]
+
+[project.optional-dependencies]
+qwen = [
+    "qwen-tts>=0.1.1",
+    "torch==2.11.0",
+    "torchaudio==2.11.0",
+]
+kokoro = [
+    "kokoro-onnx>=0.6.1",
 ]
 
 [tool.uv]
 package = false
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'win32'" }]
+torchaudio = [{ index = "pytorch-cu130", marker = "sys_platform == 'win32'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

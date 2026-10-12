@@ -83,7 +83,7 @@ conversiq/
 │   ├── 02_pageindex_tree.ipynb
 │   ├── 03_retrieval_query.ipynb
 │   ├── 04_stt_groq_whisper.ipynb
-│   ├── 05_tts_piper.ipynb
+│   ├── 05_tts_cartesia.ipynb
 │   └── 06_interrupt_resume_logic.ipynb
 │
 ├── src/
@@ -238,9 +238,10 @@ src/stt.py
 
 ---
 
-## Piper
+## Cartesia
 
-Use Piper for text-to-speech.
+Use Cartesia for text-to-speech. Load credentials from `.env` and make no
+Cartesia API calls at import time.
 
 Text-to-speech responsibility:
 
@@ -502,7 +503,7 @@ Responsibilities:
 text → audio
 ```
 
-Keep Piper-specific logic isolated.
+Keep Cartesia-specific logic isolated.
 
 ---
 
@@ -621,7 +622,7 @@ audio → transcript
 
 ---
 
-## 05_tts_piper.ipynb
+## 05_tts_cartesia.ipynb
 
 Must prove:
 
@@ -977,7 +978,7 @@ Groq
     ↓
 LLM + STT
 
-Piper
+Cartesia
     ↓
 TTS
 

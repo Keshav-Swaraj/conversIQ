@@ -12,11 +12,14 @@ _SUPPORTED_EXTENSIONS = frozenset(
 )
 
 
-def transcribe_audio(file_path: str | Path) -> str:
+def transcribe_audio(
+    file_path: str | Path, *, prompt: str | None = None, language: str | None = None
+) -> str:
     """Return the transcript of a supported local audio file.
 
     The file is sent to Groq's transcription endpoint. An audio file with no
     recognized speech may produce an empty string; provider errors propagate.
+    An optional prompt can supply spelling context for short utterances.
     """
     audio_path = Path(file_path)
     if not audio_path.is_file():
@@ -28,8 +31,10 @@ def transcribe_audio(file_path: str | Path) -> str:
 
     client = Groq(api_key=GROQ_API_KEY)
     with audio_path.open("rb") as audio_file:
-        transcription = client.audio.transcriptions.create(
-            file=(audio_path.name, audio_file),
-            model=STT_MODEL,
-        )
+        options = {"file": (audio_path.name, audio_file), "model": STT_MODEL}
+        if prompt:
+            options["prompt"] = prompt
+        if language:
+            options["language"] = language
+        transcription = client.audio.transcriptions.create(**options)
     return transcription.text.strip()

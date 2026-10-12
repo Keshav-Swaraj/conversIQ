@@ -51,6 +51,27 @@ def test_transcribe_audio_uses_groq_whisper(
     }
 
 
+def test_transcribe_audio_can_hint_wake_name(
+    audio_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Short wake recordings pass spelling and language context to Whisper."""
+    observed: dict[str, object] = {}
+
+    def fake_groq(*, api_key: str) -> SimpleNamespace:
+        def create(**options: object) -> SimpleNamespace:
+            observed.update(options)
+            return SimpleNamespace(text="Sarah")
+
+        return SimpleNamespace(
+            audio=SimpleNamespace(transcriptions=SimpleNamespace(create=create))
+        )
+
+    monkeypatch.setattr(stt, "Groq", fake_groq)
+    assert stt.transcribe_audio(audio_file, prompt="Sarah. Hey Sarah.", language="en") == "Sarah"
+    assert observed["prompt"] == "Sarah. Hey Sarah."
+    assert observed["language"] == "en"
+
+
 def test_missing_audio_file_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="Audio file does not exist"):
         stt.transcribe_audio(tmp_path / "missing.wav")

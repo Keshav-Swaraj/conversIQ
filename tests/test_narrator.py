@@ -81,20 +81,19 @@ def test_synthesis_preserves_cursor(
     audio_path = tmp_path / "spoken.wav"
     captured: list[str] = []
 
-    def fake_synthesize(text: str, voice_path: str | Path, output_path: str | Path) -> Path:
+    def fake_synthesize(text: str, output_path: str | Path) -> Path:
         captured.append(text)
-        assert voice_path == tmp_path / "voice.onnx"
         return Path(output_path)
 
     monkeypatch.setattr("src.narrator.synthesize_speech", fake_synthesize)
     spoken_text, path = synthesize_narration_segment(
-        state, tmp_path / "voice.onnx", audio_path, max_characters=3
+        state, audio_path, max_characters=3
     )
     assert (spoken_text, path, captured) == ("Hel", audio_path, ["Hel"])
     assert (state.page_number, state.text_offset) == (2, 0)
 
     with pytest.raises(RuntimeError, match="Resume narration"):
-        synthesize_narration_segment(pause_narration(state), "voice.onnx", audio_path)
+        synthesize_narration_segment(pause_narration(state), audio_path)
 
 
 def test_page_count_must_match_page_records() -> None:
@@ -147,7 +146,7 @@ def test_segments_preserve_every_character_and_advance_only_after_playback(
     state = start_narration(document)
     spoken: list[str] = []
 
-    def fake_synthesize(text: str, voice_path: str | Path, output_path: str | Path) -> Path:
+    def fake_synthesize(text: str, output_path: str | Path) -> Path:
         spoken.append(text)
         return Path(output_path)
 
@@ -156,7 +155,7 @@ def test_segments_preserve_every_character_and_advance_only_after_playback(
     while not state.is_complete:
         cursor_before = (state.page_number, state.text_offset)
         segment, _ = synthesize_narration_segment(
-            state, tmp_path / "voice.onnx", tmp_path / "segment.wav", limit
+            state, tmp_path / "segment.wav", limit
         )
         assert (state.page_number, state.text_offset) == cursor_before
         assert 0 < len(segment) <= limit

@@ -24,7 +24,6 @@ def test_run_once_narrates_answers_and_continues(
 ) -> None:
     pdf = tmp_path / "document.pdf"
     question_audio = tmp_path / "question.wav"
-    voice = tmp_path / "voice.onnx"
     question_audio.write_bytes(b"recorded question")
     model = tmp_path / "silero.onnx"
     model.write_bytes(b"model fixture")
@@ -35,7 +34,7 @@ def test_run_once_narrates_answers_and_continues(
     monkeypatch.setattr(main, "generate_doc_id", lambda path: "doc-id")
     monkeypatch.setattr(main, "build_tree", lambda path, doc_id: events.append("index"))
 
-    def narrate(state, voice_path, output_path, max_characters):
+    def narrate(state, output_path, max_characters):
         events.append("narrate")
         assert max_characters == 4
         return document.pages[0].text[state.text_offset : state.text_offset + 4], Path(output_path)
@@ -77,7 +76,7 @@ def test_run_once_narrates_answers_and_continues(
     monkeypatch.setattr(
         graph,
         "synthesize_speech",
-        lambda text, voice_path, output_path: events.append("synthesize answer") or Path(output_path),
+        lambda text, output_path: events.append("synthesize answer") or Path(output_path),
     )
     monkeypatch.setattr(
         main,
@@ -88,7 +87,7 @@ def test_run_once_narrates_answers_and_continues(
     )
 
     result = main.run_once(
-        pdf, None if record else question_audio, voice, tmp_path, 4,
+        pdf, None if record else question_audio, tmp_path, 4,
         record_seconds=2 if record else None,
         interrupt_on_enter=interrupt,
         interrupt_on_speech=speech,
@@ -112,16 +111,16 @@ def test_run_once_narrates_answers_and_continues(
 
 def test_run_once_rejects_missing_question_audio(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="Question audio does not exist"):
-        main.run_once(tmp_path / "document.pdf", tmp_path / "missing.wav", tmp_path / "voice.onnx", tmp_path)
+        main.run_once(tmp_path / "document.pdf", tmp_path / "missing.wav", tmp_path)
 
 
 def test_run_once_requires_one_question_source(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="either question_audio_path or record_seconds"):
-        main.run_once(tmp_path / "document.pdf", None, tmp_path / "voice.onnx", tmp_path)
+        main.run_once(tmp_path / "document.pdf", None, tmp_path)
     with pytest.raises(ValueError, match="either question_audio_path or record_seconds"):
         main.run_once(
             tmp_path / "document.pdf", tmp_path / "question.wav",
-            tmp_path / "voice.onnx", tmp_path, record_seconds=2,
+            tmp_path, record_seconds=2,
         )
 
 
@@ -131,8 +130,7 @@ def test_run_once_rejects_bad_record_duration_before_playback(
 ) -> None:
     with pytest.raises(ValueError, match="record_seconds"):
         main.run_once(
-            tmp_path / "document.pdf", None, tmp_path / "voice.onnx",
-            tmp_path, record_seconds=duration,
+            tmp_path / "document.pdf", None, tmp_path, record_seconds=duration,
         )
 
 
@@ -148,7 +146,7 @@ def test_speech_mode_without_detected_speech_skips_question_flow(
     monkeypatch.setattr(main, "build_tree", lambda path, doc_id: {})
     monkeypatch.setattr(
         main, "synthesize_narration_segment",
-        lambda state, voice, output, count: ("abc", Path(output)),
+        lambda state, output, count: ("abc", Path(output)),
     )
     monkeypatch.setattr(main, "play_wav_interruptible", lambda path, check: True)
 
@@ -163,7 +161,7 @@ def test_speech_mode_without_detected_speech_skips_question_flow(
     )
 
     result = main.run_once(
-        tmp_path / "document.pdf", None, tmp_path / "voice.onnx", tmp_path,
+        tmp_path / "document.pdf", None, tmp_path,
         segment_characters=3, record_seconds=2, interrupt_on_speech=True,
         vad_model_path=model,
     )
@@ -180,7 +178,6 @@ def test_cli_dispatches_continuous_mode(
         sys, "argv",
         [
             "main.py", "--pdf", str(tmp_path / "document.pdf"),
-            "--voice", str(tmp_path / "voice.onnx"),
             "--record-seconds", "3", "--interrupt-on-speech",
             "--continuous", "--max-segments", "2",
         ],
@@ -201,5 +198,5 @@ def test_cli_dispatches_continuous_mode(
     main.main()
 
     assert len(observed) == 1
-    assert observed[0][4:7] == (3.0, 140, 2)
+    assert observed[0][3:6] == (3.0, 140, 2)
     assert "Segments attempted: 2" in capsys.readouterr().out

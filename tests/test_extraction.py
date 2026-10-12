@@ -34,6 +34,20 @@ def test_extract_pdf_returns_ordered_page_records(valid_pdf: Path) -> None:
     assert extracted.pages[1].text.strip() == "Second page text"
 
 
+def test_extract_pdf_uses_visible_top_to_bottom_reading_order(tmp_path: Path) -> None:
+    """PDF drawing order must not make narration skip the visible first paragraph."""
+    pdf_path = tmp_path / "out-of-order.pdf"
+    with pymupdf.open() as document:
+        page = document.new_page()
+        page.insert_text((72, 320), "Later paragraph")
+        page.insert_text((72, 100), "Opening paragraph")
+        document.save(pdf_path)
+
+    assert [line for line in extract_pdf(pdf_path).pages[0].text.splitlines() if line.strip()] == [
+        "Opening paragraph", "Later paragraph",
+    ]
+
+
 def test_extract_pdf_rejects_non_pdf_extension(tmp_path: Path) -> None:
     """Existing non-PDF files are rejected before opening."""
     text_path = tmp_path / "not-a-pdf.txt"

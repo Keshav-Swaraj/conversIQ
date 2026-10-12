@@ -32,3 +32,10 @@ landing_page/artifacts/
 
 # Local research materials
 research_paper/
+experiments/
+data/
+
+# Local test scratch space
+.sandbox_pytest_*/
+_tmp_stream_tests_*/
+tests/_pytest_tmp/

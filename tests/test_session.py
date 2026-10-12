@@ -24,13 +24,15 @@ def test_session_replays_interrupted_segment_and_reuses_setup(
     monkeypatch.setattr(session, "extract_pdf", lambda path: events.append("extract") or document)
     monkeypatch.setattr(session, "generate_doc_id", lambda path: "doc-id")
     monkeypatch.setattr(session, "build_tree", lambda path, doc_id: events.append("index"))
-    voice = object()
-    monkeypatch.setattr(session, "load_voice", lambda path: events.append("load voice") or voice)
+    client = SimpleNamespace(close=lambda: events.append("close client"))
+    monkeypatch.setattr(session, "create_tts_provider", lambda: events.append("create client") or client)
 
-    def synthesize(state, voice_path, output, count, *, loaded_voice):
-        assert loaded_voice is voice
+    def synthesize(state, output, count, *, provider):
+        assert provider is client_for_test
         offsets.append(state.text_offset)
         return remaining_page_text(state)[:count], Path(output)
+
+    client_for_test = client
 
     monkeypatch.setattr(session, "synthesize_narration_segment", synthesize)
     monkeypatch.setattr(
@@ -53,7 +55,7 @@ def test_session_replays_interrupted_segment_and_reuses_setup(
         def invoke(self, values):
             events.append("question")
             assert values["narration_state"].text_offset == 3
-            assert values["loaded_voice"] is voice
+            assert values["tts_provider"] is client
             return {"narration_state": values["narration_state"], "answer": "Grounded answer."}
 
     monkeypatch.setattr(
@@ -62,7 +64,7 @@ def test_session_replays_interrupted_segment_and_reuses_setup(
     )
 
     result = session.run_continuous_session(
-        tmp_path / "document.pdf", tmp_path / "voice.onnx", model, tmp_path,
+        tmp_path / "document.pdf", model, tmp_path,
         record_seconds=2, segment_characters=3, input_device=3,
     )
 
@@ -74,7 +76,8 @@ def test_session_replays_interrupted_segment_and_reuses_setup(
     assert events.count("extract") == 1
     assert events.count("index") == 1
     assert events.count("compile") == 1
-    assert events.count("load voice") == 1
+    assert events.count("create client") == 1
+    assert events.count("close client") == 1
     assert events.count("question") == 1
     assert events.count("capture") == 1
 
@@ -89,10 +92,10 @@ def test_session_segment_limit_keeps_resumable_cursor(
     monkeypatch.setattr(session, "generate_doc_id", lambda path: "doc-id")
     monkeypatch.setattr(session, "build_tree", lambda path, doc_id: {})
     monkeypatch.setattr(session, "get_interrupt_graph", lambda: SimpleNamespace(invoke=None))
-    monkeypatch.setattr(session, "load_voice", lambda path: object())
+    monkeypatch.setattr(session, "create_tts_provider", lambda: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(
         session, "synthesize_narration_segment",
-        lambda state, voice, output, count, *, loaded_voice: (
+        lambda state, output, count, *, provider: (
             remaining_page_text(state)[:count], Path(output)
         ),
     )
@@ -106,7 +109,7 @@ def test_session_segment_limit_keeps_resumable_cursor(
     monkeypatch.setattr(session, "monitor_microphone", fake_monitor)
 
     result = session.run_continuous_session(
-        tmp_path / "document.pdf", tmp_path / "voice.onnx", model, tmp_path,
+        tmp_path / "document.pdf", model, tmp_path,
         segment_characters=3, max_segments=2,
     )
     assert not result.narration_state.is_complete
@@ -128,10 +131,10 @@ def test_stop_during_playback_does_not_capture_or_advance(
     monkeypatch.setattr(session, "generate_doc_id", lambda path: "doc-id")
     monkeypatch.setattr(session, "build_tree", lambda path, doc_id: {})
     monkeypatch.setattr(session, "get_interrupt_graph", lambda: SimpleNamespace(invoke=None))
-    monkeypatch.setattr(session, "load_voice", lambda path: object())
+    monkeypatch.setattr(session, "create_tts_provider", lambda: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(
         session, "synthesize_narration_segment",
-        lambda state, voice, output, count, *, loaded_voice: ("A sentence.", Path(output)),
+        lambda state, output, count, *, provider: ("A sentence.", Path(output)),
     )
 
     def fake_playback(path, should_interrupt):
@@ -152,7 +155,7 @@ def test_stop_during_playback_does_not_capture_or_advance(
 
     monkeypatch.setattr(session, "monitor_microphone", fake_monitor)
     result = session.run_continuous_session(
-        tmp_path / "document.pdf", tmp_path / "voice.onnx", model, tmp_path,
+        tmp_path / "document.pdf", model, tmp_path,
         stop_requested=lambda: stop, on_update=events.append,
     )
 
@@ -167,11 +170,11 @@ def test_stop_during_playback_does_not_capture_or_advance(
 def test_session_validates_limit_and_model(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="max_segments"):
         session.run_continuous_session(
-            tmp_path / "doc.pdf", tmp_path / "voice.onnx", tmp_path / "model.onnx",
+            tmp_path / "doc.pdf", tmp_path / "model.onnx",
             tmp_path, max_segments=0,
         )
     with pytest.raises(FileNotFoundError, match="Silero VAD model"):
         session.run_continuous_session(
-            tmp_path / "doc.pdf", tmp_path / "voice.onnx", tmp_path / "model.onnx",
+            tmp_path / "doc.pdf", tmp_path / "model.onnx",
             tmp_path,
         )

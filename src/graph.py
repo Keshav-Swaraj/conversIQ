@@ -7,7 +7,6 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from piper import PiperVoice
 
 from src.extraction import ExtractedPage
 from src.indexer import load_tree
@@ -15,6 +14,7 @@ from src.narrator import NarrationState, pause_narration, resume_narration
 from src.retriever import RetrievedNode, generate_answer, retrieve_document
 from src.stt import transcribe_audio
 from src.tts import play_wav, prepare_spoken_answer, synthesize_speech
+from src.tts_contract import TTSProvider
 
 
 class ConversIQState(TypedDict, total=False):
@@ -40,10 +40,10 @@ class InterruptState(ConversIQState, total=False):
     narration_state: NarrationState
     saved_position: tuple[int, int]
     audio_path: str | Path
-    voice_path: str | Path
     answer_audio_path: str | Path
     answer_audio_played: bool
-    loaded_voice: PiperVoice
+    tts_provider: TTSProvider
+    tts_client: Any  # Older notebook callers may still pass a Cartesia client.
 
 
 def _node_diagnostics(
@@ -137,15 +137,16 @@ def _route_question(state: InterruptState) -> str:
 def synthesize_answer_node(state: InterruptState) -> InterruptState:
     """Speak a clean copy of the answer without changing its displayed text."""
     spoken_answer = prepare_spoken_answer(state["answer"])
-    if "loaded_voice" in state:
+    if "tts_provider" in state:
         audio_path = synthesize_speech(
-            spoken_answer, state["voice_path"], state["answer_audio_path"],
-            loaded_voice=state["loaded_voice"],
+            spoken_answer, state["answer_audio_path"], provider=state["tts_provider"],
+        )
+    elif "tts_client" in state:  # Compatibility with an older notebook state.
+        audio_path = synthesize_speech(
+            spoken_answer, state["answer_audio_path"], client=state["tts_client"],
         )
     else:
-        audio_path = synthesize_speech(
-            spoken_answer, state["voice_path"], state["answer_audio_path"]
-        )
+        audio_path = synthesize_speech(spoken_answer, state["answer_audio_path"])
     return {"answer_audio_path": audio_path}
 
 

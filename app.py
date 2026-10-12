@@ -12,7 +12,6 @@ from src.session import SessionResult, run_continuous_session
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-VOICE_PATH = PROJECT_ROOT / "cache" / "voices" / "en_US-lessac-medium.onnx"
 VAD_PATH = PROJECT_ROOT / "cache" / "vad" / "silero_vad.onnx"
 OUTPUT_DIR = PROJECT_ROOT / "cache" / "tts"
 
@@ -106,7 +105,7 @@ class ConversIQWindow:
         if self.pdf_path is None or not self.pdf_path.is_file():
             messagebox.showerror("Choose a PDF", "Select an existing PDF first.", parent=self.root)
             return
-        for required in (VOICE_PATH, VOICE_PATH.with_suffix(".onnx.json"), VAD_PATH):
+        for required in (VAD_PATH,):
             if not required.is_file():
                 messagebox.showerror("Missing local model", f"Required file not found:\n{required}", parent=self.root)
                 return
@@ -145,7 +144,6 @@ class ConversIQWindow:
         try:
             result = run_continuous_session(
                 pdf_path,
-                VOICE_PATH,
                 VAD_PATH,
                 OUTPUT_DIR,
                 stop_requested=self._stop.is_set,

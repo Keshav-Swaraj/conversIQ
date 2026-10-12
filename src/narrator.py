@@ -4,10 +4,11 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 import re
 
-from piper import PiperVoice
+from typing import Any
 
 from src.extraction import ExtractedDocument
 from src.tts import synthesize_speech
+from src.tts_contract import TTSProvider
 
 
 _TITLES = {"mr", "mrs", "ms", "dr", "prof", "jr", "sr", "st"}
@@ -117,11 +118,11 @@ def resume_narration(state: NarrationState) -> NarrationState:
 
 def synthesize_narration_segment(
     state: NarrationState,
-    voice_path: str | Path,
     output_path: str | Path,
     max_characters: int = 500,
     *,
-    loaded_voice: PiperVoice | None = None,
+    provider: TTSProvider | None = None,
+    client: Any = None,
 ) -> tuple[str, Path]:
     """Render a short group of complete sentences without advancing the cursor.
 
@@ -152,8 +153,8 @@ def synthesize_narration_segment(
         if word_end > 0:
             text = text[: word_end + 1]
     spoken_text = _speech_text(text)
-    if loaded_voice is None:
-        return text, synthesize_speech(spoken_text, voice_path, output_path)
-    return text, synthesize_speech(
-        spoken_text, voice_path, output_path, loaded_voice=loaded_voice
-    )
+    if provider is not None:
+        return text, synthesize_speech(spoken_text, output_path, provider=provider)
+    if client is not None:
+        return text, synthesize_speech(spoken_text, output_path, client=client)
+    return text, synthesize_speech(spoken_text, output_path)

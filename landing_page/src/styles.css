@@ -2751,6 +2751,69 @@ footer {
   scrollbar-width: thin;
   scrollbar-color: #514163 transparent;
 }
+.workspace-book.pdf-book {
+  padding: 12px 16px 24px;
+  background: #202023;
+  scroll-behavior: smooth;
+}
+.pdf-page-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pdf-page-wrap {
+  width: min(100%, 720px);
+  margin: 0 auto;
+}
+.pdf-page-sheet {
+  position: relative;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 3px 18px #0005;
+}
+.pdf-page-image {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.pdf-word-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.pdf-word-box {
+  position: absolute;
+  display: block;
+  border-radius: 2px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.pdf-word-box:hover {
+  background: #ae91ea69;
+}
+.pdf-word-box.current-sentence {
+  background: #b3a3ee63;
+}
+.pdf-word-box.current-word,
+.pdf-word-box.current-word:hover {
+  background: #8465e9a8;
+  box-shadow: 0 0 0 1px #7652e3b0;
+}
+.pdf-page-number {
+  display: block;
+  color: #837c8e;
+  font-size: 10px;
+  text-align: center;
+  padding-top: 5px;
+}
+.pdf-page-error {
+  position: absolute;
+  top: 15px;
+  left: 15px;
+  background: #fff;
+  color: #3b304c !important;
+  padding: 8px !important;
+}
 .workspace-book h3 {
   overflow-wrap: anywhere;
 }
@@ -2837,8 +2900,40 @@ footer {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.workspace-window .stop-answer {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 9px 27px;
+  padding: 5px 7px;
+  border: 1px solid #ac91e73a;
+  border-radius: 5px;
+  color: #d9c8ff;
+  font-size: 8px;
+}
+.workspace-window .stop-answer:hover {
+  background: #ac91e72b;
+}
 .workspace-window .narration-status {
   min-height: 34px;
+  flex-wrap: wrap;
+}
+.workspace-window .interrupt-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding: 4px 7px;
+  border: 1px solid #ac91e73a;
+  border-radius: 5px;
+  color: #a99ac5;
+  font-size: 8px;
+  white-space: nowrap;
+}
+.workspace-window .interrupt-toggle.active {
+  color: #d9c8ff;
+  background: #ac91e72b;
+  border-color: #b7a5ff75;
 }
 .workspace-window .source-modal small {
   display: block;

@@ -1,6 +1,7 @@
 """Tree-guided retrieval of authoritative PDF source text."""
 
 from dataclasses import dataclass
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -135,7 +136,37 @@ def generate_answer(
     if not source_text.strip() or not relevant_pages:
         return _NO_RELEVANT_INFORMATION
 
-    prompt = ChatPromptTemplate.from_messages(
+    prompt = _answer_prompt()
+    model = _answer_model()
+    response = (prompt | model).invoke(
+        {
+            "query": query,
+            "source_text": source_text,
+            "relevant_pages": ", ".join(str(page) for page in relevant_pages),
+        }
+    )
+    return str(response.content).strip()
+
+
+def stream_answer(
+    query: str, source_text: str, relevant_pages: tuple[int, ...]
+) -> Iterator[str]:
+    """Yield grounded answer text as the configured Groq model produces it."""
+    if not source_text.strip() or not relevant_pages:
+        yield _NO_RELEVANT_INFORMATION
+        return
+    for chunk in (_answer_prompt() | _answer_model()).stream({
+        "query": query,
+        "source_text": source_text,
+        "relevant_pages": ", ".join(str(page) for page in relevant_pages),
+    }):
+        if isinstance(chunk.content, str) and chunk.content:
+            yield chunk.content
+
+
+def _answer_prompt() -> ChatPromptTemplate:
+    """Keep streamed and non-streamed answers on the same grounded prompt."""
+    return ChatPromptTemplate.from_messages(
         [
             (
                 "system",
@@ -153,20 +184,16 @@ def generate_answer(
             ),
         ]
     )
-    model = ChatGroq(
+
+
+def _answer_model() -> ChatGroq:
+    """Use the same model parameters for both answer delivery modes."""
+    return ChatGroq(
         model=ANSWER_MODEL,
         api_key=GROQ_API_KEY,
         temperature=0,
         max_tokens=500,
     )
-    response = (prompt | model).invoke(
-        {
-            "query": query,
-            "source_text": source_text,
-            "relevant_pages": ", ".join(str(page) for page in relevant_pages),
-        }
-    )
-    return str(response.content).strip()
 
 
 def _flatten_tree(tree: dict[str, Any]) -> tuple[RetrievedNode, ...]:

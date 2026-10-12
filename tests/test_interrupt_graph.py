@@ -22,7 +22,7 @@ def test_spoken_question_answers_then_resumes_at_saved_position(
     narration_state, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     events: list[str] = []
-    session_voice = object()
+    session_client = object()
 
     def transcribe(audio_path: str | Path) -> str:
         events.append("transcribe")
@@ -40,11 +40,11 @@ def test_spoken_question_answers_then_resumes_at_saved_position(
         return "**A Portkey** transports people. 【1†L1-L2】"
 
     def synthesize(
-        text: str, voice_path: str | Path, output_path: str | Path, *, loaded_voice: object
+        text: str, output_path: str | Path, *, client: object
     ) -> Path:
         events.append("synthesize")
         assert text == "A Portkey transports people."
-        assert loaded_voice is session_voice
+        assert client is session_client
         return Path(output_path)
 
     def play(path: Path) -> None:
@@ -68,9 +68,8 @@ def test_spoken_question_answers_then_resumes_at_saved_position(
             "doc_id": "test-doc",
             "file_path": tmp_path / "question.pdf",
             "audio_path": tmp_path / "question.wav",
-            "voice_path": tmp_path / "voice.onnx",
             "answer_audio_path": tmp_path / "answer.wav",
-            "loaded_voice": session_voice,
+            "tts_client": session_client,
         }
     )
 
@@ -121,7 +120,7 @@ def test_unanswerable_question_speaks_grounded_fallback(
         lambda **kwargs: RetrievalResult((), "", (), ()),
     )
 
-    def synthesize(text: str, voice_path: str | Path, output_path: str | Path) -> Path:
+    def synthesize(text: str, output_path: str | Path) -> Path:
         spoken.append(text)
         return Path(output_path)
 
@@ -133,7 +132,6 @@ def test_unanswerable_question_speaks_grounded_fallback(
             "doc_id": "test-doc",
             "file_path": tmp_path / "question.pdf",
             "audio_path": tmp_path / "question.wav",
-            "voice_path": tmp_path / "voice.onnx",
             "answer_audio_path": tmp_path / "answer.wav",
         }
     )

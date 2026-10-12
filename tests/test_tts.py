@@ -1,4 +1,4 @@
-"""Local tests for the Piper text-to-WAV boundary."""
+"""Offline tests for the Cartesia text-to-WAV boundary."""
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,71 +10,71 @@ import pytest
 from src import tts
 
 
-@pytest.fixture
-def voice_path(tmp_path: Path) -> Path:
-    model = tmp_path / "test-voice.onnx"
-    model.write_bytes(b"model fixture")
-    model.with_suffix(".onnx.json").write_text("{}", encoding="utf-8")
-    return model
+def _write_wav(path: Path, *, frames: int = 160, rate: int = 44_100) -> None:
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(rate)
+        wav.writeframes(b"\x01\x00" * frames)
 
 
-def test_synthesize_speech_writes_wav(
-    voice_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_synthesize_speech_writes_valid_wav_with_selected_voice(tmp_path: Path) -> None:
     observed: dict[str, object] = {}
 
-    def load(model_path: Path, *, use_cuda: bool) -> SimpleNamespace:
-        observed["model_path"] = model_path
-        observed["use_cuda"] = use_cuda
+    def generate(**kwargs: object) -> SimpleNamespace:
+        observed.update(kwargs)
+        return SimpleNamespace(write_to_file=lambda path: _write_wav(Path(path)))
 
-        def synthesize_wav(text: str, wav_file: wave.Wave_write) -> None:
-            observed["text"] = text
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(16_000)
-            wav_file.writeframes(b"\x01\x00" * 160)
-
-        return SimpleNamespace(synthesize_wav=synthesize_wav)
-
-    monkeypatch.setattr(tts, "PiperVoice", SimpleNamespace(load=load))
+    client = SimpleNamespace(tts=SimpleNamespace(generate=generate))
     output = tmp_path / "nested" / "spoken.wav"
-
-    assert tts.synthesize_speech("Hello, ConversIQ.", voice_path, output) == output
+    assert tts.synthesize_speech(
+        "Hello, ConversIQ.", output, client=client,
+        voice_id="voice-1", model_id="sonic-latest",
+    ) == output
     assert observed == {
-        "model_path": voice_path,
-        "use_cuda": False,
-        "text": "Hello, ConversIQ.",
+        "model_id": "sonic-latest",
+        "transcript": "Hello, ConversIQ.",
+        "voice": "voice-1",
+        "language": "en",
+        "output_format": {
+            "container": "wav", "encoding": "pcm_s16le", "sample_rate": 44_100,
+        },
     }
-    with wave.open(str(output), "rb") as wav_file:
-        assert wav_file.getnframes() == 160
-        assert wav_file.getframerate() == 16_000
+    with wave.open(str(output), "rb") as wav:
+        assert wav.getnframes() == 160
+        assert wav.getframerate() == 44_100
 
 
-def test_explicit_voice_is_loaded_once_for_multiple_segments(
-    voice_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_owned_client_is_closed_after_synthesis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    loads: list[Path] = []
-    spoken: list[str] = []
+    closed: list[bool] = []
+    fake = SimpleNamespace(
+        name="cartesia", model="sonic-latest", voice="voice-1",
+        synthesize=lambda text, path: _write_wav(path),
+        close=lambda: closed.append(True),
+    )
+    monkeypatch.setattr(tts, "create_tts_provider", lambda: fake)
+    tts.synthesize_speech("Hello.", tmp_path / "speech.wav")
+    assert closed == [True]
 
-    def synthesize_wav(text: str, wav_file: wave.Wave_write) -> None:
-        spoken.append(text)
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(16_000)
-        wav_file.writeframes(b"\x00\x00" * 16)
 
-    def load(model_path: Path, *, use_cuda: bool) -> SimpleNamespace:
-        loads.append(model_path)
-        assert not use_cuda
-        return SimpleNamespace(synthesize_wav=synthesize_wav)
+def test_missing_cartesia_key_is_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tts.config, "CARTESIA_API_KEY", "")
+    with pytest.raises(RuntimeError, match=r"CARTESIA_API_KEY.*\.env"):
+        tts.create_tts_provider("cartesia")
 
-    monkeypatch.setattr(tts, "PiperVoice", SimpleNamespace(load=load))
-    loaded_voice = tts.load_voice(voice_path)
-    tts.synthesize_speech("First sentence.", voice_path, tmp_path / "first.wav", loaded_voice=loaded_voice)
-    tts.synthesize_speech("Second sentence.", voice_path, tmp_path / "second.wav", loaded_voice=loaded_voice)
 
-    assert loads == [voice_path]
-    assert spoken == ["First sentence.", "Second sentence."]
+def test_failed_response_does_not_replace_existing_wav(tmp_path: Path) -> None:
+    output = tmp_path / "spoken.wav"
+    _write_wav(output)
+    before = output.read_bytes()
+    fake = SimpleNamespace(tts=SimpleNamespace(generate=lambda **kwargs: SimpleNamespace(
+        write_to_file=lambda path: Path(path).write_bytes(b"invalid wav")
+    )))
+    with pytest.raises((ValueError, wave.Error)):
+        tts.synthesize_speech("Hello.", output, client=fake)
+    assert output.read_bytes() == before
 
 
 def test_answer_speech_omits_markdown_and_citation_markers() -> None:
@@ -88,42 +88,24 @@ def test_answer_speech_omits_markdown_and_citation_markers() -> None:
     )
 
 
-def test_empty_text_is_rejected(voice_path: Path, tmp_path: Path) -> None:
+def test_invalid_inputs_are_rejected_before_api_call(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="must not be empty"):
-        tts.synthesize_speech("  ", voice_path, tmp_path / "out.wav")
-
-
-def test_missing_voice_or_configuration_is_rejected(tmp_path: Path) -> None:
-    model = tmp_path / "missing.onnx"
-    with pytest.raises(FileNotFoundError, match="voice model does not exist"):
-        tts.synthesize_speech("Hello", model, tmp_path / "out.wav")
-
-    model.write_bytes(b"model fixture")
-    with pytest.raises(FileNotFoundError, match="voice configuration does not exist"):
-        tts.synthesize_speech("Hello", model, tmp_path / "out.wav")
-
-
-def test_output_must_be_wav(voice_path: Path, tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="Output must be a .wav file"):
-        tts.synthesize_speech("Hello", voice_path, tmp_path / "out.mp3")
+        tts.synthesize_speech("  ", tmp_path / "out.wav")
+    with pytest.raises(ValueError, match="voice ID"):
+        tts.synthesize_speech("Hello", tmp_path / "out.wav", voice_id=" ")
+    with pytest.raises(ValueError, match=r"Output must be a \.wav"):
+        tts.synthesize_speech("Hello", tmp_path / "out.mp3")
 
 
 def test_play_wav_uses_synchronous_windows_playback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     audio_path = tmp_path / "answer.wav"
-    with wave.open(str(audio_path), "wb") as recording:
-        recording.setnchannels(1)
-        recording.setsampwidth(2)
-        recording.setframerate(16_000)
-        recording.writeframes(b"\x00\x00" * 160)
-
+    _write_wav(audio_path)
     calls: list[tuple[str, int]] = []
-    fake_winsound = SimpleNamespace(
+    monkeypatch.setitem(sys.modules, "winsound", SimpleNamespace(
         SND_FILENAME=1,
         PlaySound=lambda path, flags: calls.append((path, flags)),
-    )
-    monkeypatch.setitem(sys.modules, "winsound", fake_winsound)
-
+    ))
     tts.play_wav(audio_path)
     assert calls == [(str(audio_path), 1)]

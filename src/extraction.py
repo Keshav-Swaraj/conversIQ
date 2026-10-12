@@ -48,7 +48,7 @@ def generate_doc_id(file_path: str | Path) -> str:
 
 
 def extract_pdf(file_path: str | Path) -> ExtractedDocument:
-    """Extract ordered, 1-based page text from a valid PDF file.
+    """Extract 1-based pages in visible reading order from a valid PDF file.
 
     Args:
         file_path: Path to the PDF to extract.
@@ -70,7 +70,7 @@ def extract_pdf(file_path: str | Path) -> ExtractedDocument:
     try:
         with pymupdf.open(pdf_path) as document:
             pages = tuple(
-                ExtractedPage(page_number=index, text=page.get_text())
+                ExtractedPage(page_number=index, text=page.get_text(sort=True))
                 for index, page in enumerate(document, start=1)
             )
     except (OSError, RuntimeError) as error:

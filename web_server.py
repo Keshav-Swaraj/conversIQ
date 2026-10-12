@@ -1,6 +1,8 @@
 """Serve the local ConversIQ workspace and its existing Python pipeline."""
 
 import argparse
+import asyncio
+from collections.abc import Iterator
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -8,9 +10,13 @@ import logging
 import mimetypes
 from pathlib import Path
 import re
+from threading import Event, Thread
 from urllib.parse import parse_qs, urlsplit
 
 from src.web_service import WorkspaceService
+from src.live_conversation import LiveConversationError
+from src.live_voice import serve_live_voice
+from src.tts_contract import TTSSetupError
 
 
 DIST_DIR = Path(__file__).resolve().parent / "landing_page" / "dist"
@@ -30,8 +36,22 @@ class WorkspaceHandler(BaseHTTPRequestHandler):
         try:
             if parsed.path == "/api/health":
                 self._json({"status": "ready"})
+            elif parsed.path == "/api/live-voice-config":
+                doc_id = self._one(query, "doc_id")
+                self.service._document_path(doc_id)
+                self._json({
+                    "url": f"ws://127.0.0.1:{self.voice_port}/api/live-voice?doc_id={doc_id}",
+                })
             elif parsed.path == "/api/document":
                 self._json(self.service.document(self._one(query, "id")))
+            elif parsed.path == "/api/pdf-page":
+                self._png(self.service.pdf_page_image(
+                    self._one(query, "id"), int(self._one(query, "page"))
+                ))
+            elif parsed.path == "/api/pdf-words":
+                self._json(self.service.pdf_page_words(
+                    self._one(query, "id"), int(self._one(query, "page"))
+                ))
             elif parsed.path == "/api/audio":
                 self._audio_file(self.service.audio_path(self._one(query, "token")))
             elif parsed.path.startswith("/api/"):
@@ -68,7 +88,10 @@ class WorkspaceHandler(BaseHTTPRequestHandler):
                 response = self.service.upload(self._one(query, "filename"), body)
             elif parsed.path == "/api/transcribe":
                 response = {
-                    "transcript": self.service.transcribe(body, self._one(query, "extension"))
+                    "transcript": self.service.transcribe(
+                        body, self._one(query, "extension"),
+                        wake_word=query.get("wake", []) == ["1"],
+                    )
                 }
             else:
                 data = json.loads(body)
@@ -76,6 +99,17 @@ class WorkspaceHandler(BaseHTTPRequestHandler):
                     raise ValueError("Expected a JSON object.")
                 if parsed.path == "/api/ask":
                     response = self.service.ask(str(data["doc_id"]), str(data["query"]))
+                elif parsed.path == "/api/ask-stream":
+                    self._ndjson(self.service.ask_stream(str(data["doc_id"]), str(data["query"])))
+                    return
+                elif parsed.path == "/api/ask-live-stream":
+                    self._ndjson(self.service.ask_live_stream(
+                        str(data["doc_id"]), str(data["query"]), data.get("history"),
+                    ))
+                    return
+                elif parsed.path == "/api/sarah-speech":
+                    self._ndjson(self.service.sarah_speech(str(data["text"])))
+                    return
                 elif parsed.path == "/api/narrate":
                     response = self.service.narrate(
                         str(data["doc_id"]), int(data["page"]), int(data["offset"])
@@ -86,7 +120,7 @@ class WorkspaceHandler(BaseHTTPRequestHandler):
                     self._error(HTTPStatus.NOT_FOUND, "Unknown API endpoint.")
                     return
             self._json(response)
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError, TTSSetupError) as error:
             self._error(HTTPStatus.BAD_REQUEST, str(error))
         except FileNotFoundError as error:
             self._error(HTTPStatus.NOT_FOUND, str(error))
@@ -110,6 +144,40 @@ class WorkspaceHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def _ndjson(self, events: Iterator[dict[str, object]]) -> None:
+        """Flush each answer event as a JSON line without buffering the full reply."""
+        first = next(events)  # Validation/retrieval errors still use the normal JSON error path.
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            self.wfile.write((json.dumps(first, ensure_ascii=False) + "\n").encode("utf-8"))
+            self.wfile.flush()
+            for event in events:
+                self.wfile.write((json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8"))
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            return
+        except LiveConversationError as error:
+            LOGGER.warning("Workspace spoken answer unavailable: %s", error)
+            try:
+                self.wfile.write((json.dumps({"type": "error", "message": str(error)}) + "\n").encode("utf-8"))
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass
+        except Exception:
+            LOGGER.exception("Workspace answer stream failed")
+            try:
+                self.wfile.write(b'{"type":"error","message":"Answer generation failed. Check the server log."}\n')
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass
+        finally:
+            close = getattr(events, "close", None)
+            if close is not None:
+                close()
+
     def _error(self, status: HTTPStatus, message: str) -> None:
         self._json({"error": message}, status)
 
@@ -118,6 +186,15 @@ class WorkspaceHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _png(self, payload: bytes) -> None:
+        """Serve a rendered PDF page without exposing the underlying upload path."""
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "private, max-age=3600")
         self.end_headers()
         self.wfile.write(payload)
 
@@ -189,6 +266,22 @@ def main() -> None:
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     WorkspaceHandler.service = WorkspaceService()
+    WorkspaceHandler.voice_port = args.port + 1
+    voice_ready = Event()
+    voice_errors: list[Exception] = []
+
+    def run_voice() -> None:
+        try:
+            asyncio.run(serve_live_voice(args.port + 1, WorkspaceHandler.service, voice_ready))
+        except Exception as error:
+            voice_errors.append(error)
+            voice_ready.set()
+
+    Thread(target=run_voice, name="conversiq-live-voice", daemon=True).start()
+    if not voice_ready.wait(5) or voice_errors:
+        raise RuntimeError("Could not start the local Gemini Live voice server.") from (
+            voice_errors[0] if voice_errors else None
+        )
     server = ThreadingHTTPServer(("127.0.0.1", args.port), WorkspaceHandler)
     print(f"ConversIQ workspace: http://127.0.0.1:{args.port}/workspace")
     try:
